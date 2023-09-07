@@ -1,0 +1,116 @@
+#!/bin/bash
+
+# fonction d'affichage de l'aide
+function usage() {
+cat << EOF
+        V,--version                     print the version
+        -h,--help                       print this help
+        -t,--timeout <val>              timeout
+        -w,--warning <val>              a warning percent of living nodes (default=70%)
+        -c,--critical <val>             a critical percent of living nodes (default=50%)
+        -H,--hostname <nodes>           a list of nodes separeteed by spaces or a nodeset
+EOF
+}
+
+# fonction d'affichage de la version
+function version(){
+cat << EOF
+        Version 0.1 by nicolas.marie
+EOF
+}
+
+# si l'on a pas de paramètre, on exit.
+if [ $# -eq 0 ]
+then
+	usage
+	exit 3
+fi
+
+# valeurs par défaut pour les warning, critique et la liste des nodes.
+warning=70
+critical=50
+nodes_list=()
+
+# parrsing des options
+while [ $# -gt 0 ]
+do
+	case $1 in
+		"V"|"--version")
+			version
+			exit
+		;;
+		"-h"|"--help")
+			usage
+			exit
+		;;
+		"-t"|"--timeout")
+			# timeout donnée en secondes sur la ligne de commande mais en mili seconde à fping
+			timeout=$[$2 * 1000]
+			test $timeout -ge 0 || (echo "invalide timeout"; exit 3)
+			shift 2
+		;;
+		"-w"|"--warning")
+			# pourcentage de machines up en dessous duquel il y a un warning. (0 <= w <= 100)
+			warning=$[$2 % 101]
+			test $warning -ge 0 || (echo "invalide warning"; exit 3)
+			shift 2
+		;;
+		"-c"|"--critical")
+			# pourcentage de machines up en dessous duquel il y a critical. (0 <= c <= 100)
+			critical=$[$2 % 101]
+			test $critical -ge 0 || (echo "invalide critical"; exit 3)
+			shift 2
+		;;
+		"-H"|"--hostname")
+			shift
+			# liste des nodeset de machines
+			while [[ ! "${1}" =~ ^-.*$ ]] && [[ $# -gt 0 ]]
+			do
+				# pour chaques node set l'on expand le nodeset et l'on ajoute
+				# l'ensemble des machines du nodeset à la liste des machines à vérifier.
+				nodes_list=(${nodes_list[@]} $(nodeset -e ${1}))
+				shift
+			done
+		;;
+		*)
+			# erreur en cas de paramètre invalide
+			echo "invalide option: '${1}' see usage:"
+			usage
+			exit 3
+		;;
+	esac
+done
+
+# debug
+#echo ${nodes_list[@]}
+
+# compte les machines up.(0 retry, timeout à la valeur passée en paramètre)
+availables=$(fping ${nodes_list[@]} -r 0 -t $timeout 2>&1 | grep -c "is alive")
+
+# debug
+#echo "Availables nodes: $availables"
+
+# calcul du pourcentage de machines up.
+avail_perc=$[($availables * 100) / ${#nodes_list[@]}]
+
+# debug
+#echo "Availables percent: $avail_perc"
+
+
+
+# messages et code d'erreurs en fonction des paramètres.
+if [ "$critical" -ge "$avail_perc" ]
+then
+	echo "CRITICAL: $avail_perc < $critical"
+	exit 2
+fi
+
+if [ "$warning" -ge "$avail_perc" ]
+then
+	echo "WARNING: $avail_perc < $warning"
+	exit 1
+fi
+
+# tout vas bien
+exit 0
+
